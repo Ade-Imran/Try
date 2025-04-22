@@ -190,7 +190,272 @@ async function startUserScanner(userType) {
   startScanner();
 }
 
-// --- Scanning via html5‑qrcode ---
-function startScanner
-::contentReference[oaicite:0]{index=0}
- 
+// --- Scanning via html5-qrcode ---
+function startScanner() {
+  document.getElementById("qr-reader-results").innerText = "";
+  html5QrcodeScanner = new Html5QrcodeScanner("qr-reader", { fps:10, qrbox:250 }, false);
+  html5QrcodeScanner.render(onScanSuccess, onScanError);
+}
+
+function onScanSuccess(decodedText) {
+  html5QrcodeScanner.clear().catch(console.error);
+  validateQRCode(decodedText);
+}
+
+function onScanError(err) { 
+  console.warn("QR scan error:", err); 
+}
+
+function stopScanner() {
+  html5QrcodeScanner?.clear().catch(console.error);
+  backToDashboard();
+}
+
+// --- Validation & Claiming ---
+async function validateQRCode(scannedCode) {
+  try {
+    const data = JSON.parse(scannedCode);
+
+    // Query Firestore to find a matching QR code document
+    const q = query(collection(db, "generatedQRCodes"), 
+                    where("membership", "==", data.membership),
+                    where("name", "==", data.name),
+                    where("category", "==", data.category),
+                    where("validFrom", "==", data.validFrom),
+                    where("validTo", "==", data.validTo));
+    
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      document.getElementById("qr-reader-results").innerText = "❌ Invalid QR Code!";
+      handleInvalidScan("Invalid QR Code. Please scan a valid one.");
+      return;
+    }
+
+    const match = querySnapshot.docs[0].data();
+    const now = new Date();
+
+    if (now < new Date(match.validFrom)) {
+      document.getElementById("qr-reader-results").innerText = "⏳ Not yet valid!";
+      handleInvalidScan("Invalid QR Code. Please scan a valid one.");
+      return;
+    }
+
+    if (now > new Date(match.validTo)) {
+      document.getElementById("qr-reader-results").innerText = "❌ Expired!";
+      handleInvalidScan("Invalid QR Code. Please scan a valid one.");
+      return;
+    }
+
+    if (scanContext !== match.category) {
+      document.getElementById("qr-reader-results").innerText = "Invalid category.";
+      handleInvalidScan("Go collect your food at your respective category.");
+      return;
+    }
+
+    const cfg = qrConfigs[match.category];
+    if (!cfg) {
+      document.getElementById("qr-reader-results").innerText = "Food not available!";
+      handleInvalidScan("Invalid QR Code. Please scan a valid one.");
+      return;
+    }
+
+    if (now < new Date(cfg.start) || now > new Date(cfg.end)) {
+      document.getElementById("qr-reader-results").innerText = "No food available!";
+      handleInvalidScan("No food available");
+      return;
+    }
+
+    if (match.claims >= cfg.maxClaims) {
+      document.getElementById("qr-reader-results").innerText = "Already claimed!";
+      handleInvalidScan("You have already claimed your meal!");
+      return;
+    }
+
+    currentQRCode = match;
+    document.getElementById("qr-reader-results").innerHTML = 
+      `<strong>Name:</strong> ${match.name} | <strong>Membership:</strong> ${match.membership} | <strong>Claims:</strong> ${match.claims}/${cfg.maxClaims}`;
+    showElement("claim-btn");
+
+  } catch (e) {
+    console.error(e);
+    document.getElementById("qr-reader-results").innerText = "❌ Invalid QR Code!";
+    handleInvalidScan("Invalid QR Code. Please scan a valid one.");
+  }
+}
+
+async function claimFood() {
+  if (!currentQRCode) return;
+
+  // Query Firestore to find the QR code document
+  const q = query(collection(db, "generatedQRCodes"), 
+                  where("membership", "==", currentQRCode.membership),
+                  where("name", "==", currentQRCode.name),
+                  where("category", "==", currentQRCode.category),
+                  where("validFrom", "==", currentQRCode.validFrom),
+                  where("validTo", "==", currentQRCode.validTo));
+
+  const querySnapshot = await getDocs(q);
+  if (querySnapshot.empty) return;
+
+  const qrCodeDoc = querySnapshot.docs[0];
+  const qrCodeData = qrCodeDoc.data();
+  const cfg = qrConfigs[currentQRCode.category];
+  const now = new Date();
+
+  if (now < new Date(cfg.start) || now > new Date(cfg.end)) {
+    document.getElementById("qr-reader-results").innerText = "No food available!";
+    handleInvalidScan("No food available");
+    return;
+  }
+
+  if (qrCodeData.claims >= cfg.maxClaims) {
+    document.getElementById("qr-reader-results").innerText = "Already claimed!";
+    hideElement("claim-btn");
+    return;
+  }
+
+  // Increment claims and update Firestore
+  await updateDoc(qrCodeDoc.ref, {
+    claims: qrCodeData.claims + 1
+  });
+
+  currentQRCode.claims++;
+  document.getElementById("qr-reader-results").innerHTML =
+    `<strong>Name:</strong> ${currentQRCode.name} | <strong>Membership:</strong> ${currentQRCode.membership} | <strong>Claims:</strong> ${currentQRCode.claims}/${cfg.maxClaims}`;
+  hideElement("claim-btn");
+}
+
+// --- QR Code Generation ---
+async function generateQRCode() {
+  document.getElementById("qr-output").innerHTML = "";
+
+  const membership = document.getElementById("membership-number").value.trim();
+  const name       = document.getElementById("member-name").value.trim();
+  const category   = document.getElementById("member-category").value;
+  const validFrom  = document.getElementById("valid-from").value;
+  const validTo    = document.getElementById("valid-to").value;
+
+  if (!membership || !name || !validFrom || !validTo) {
+    alert("Please fill in all fields."); return;
+  }
+
+  if (new Date(validFrom) >= new Date(validTo)) {
+    alert("Valid From must be earlier than Valid To."); return;
+  }
+
+  // Check for duplicates in Firestore
+  const q = query(collection(db, "generatedQRCodes"), 
+                  where("membership", "==", membership), 
+                  where("validTo", ">", new Date()));
+
+  const querySnapshot = await getDocs(q);
+  if (!querySnapshot.empty) {
+    alert("A QR Code with this membership number already exists."); return;
+  }
+
+  const data = { membership, name, category, validFrom, validTo, claims: 0 };
+  
+  // Generate QR Code and display
+  new QRCode(document.getElementById("qr-output"), {
+    text: JSON.stringify(data),
+    width: 128,
+    height: 128,
+    colorDark: "#000000",
+    colorLight: "#ffffff"
+  });
+
+  // Save QR code data to Firestore
+  await addDoc(collection(db, "generatedQRCodes"), data);
+
+  lastGeneratedQRCodeData = data;
+  alert("QR Code generated!");
+  showElement("print-btn");
+  showStatistics();
+}
+
+// --- Statistics Display ---
+async function showStatistics() {
+  const q = query(collection(db, "generatedQRCodes"), where("validTo", ">", new Date()));
+  const querySnapshot = await getDocs(q);
+  
+  const validCodes = querySnapshot.docs.map(doc => doc.data());
+  document.getElementById("stats-summary").innerHTML =
+    `<strong>Total Registered:</strong> ${validCodes.length} | <strong>Total Claimed:</strong> ${validCodes.filter(e => e.claims > 0).length}`;
+
+  const categoryData = {};
+  validCodes.forEach(e => {
+    if (!categoryData[e.category]) categoryData[e.category] = { registered: 0, claimed: 0 };
+    categoryData[e.category].registered++;
+    if (e.claims > 0) categoryData[e.category].claimed++;
+  });
+
+  const labels = Object.keys(categoryData);
+  const registeredData = labels.map(l => categoryData[l].registered);
+  const claimedData = labels.map(l => categoryData[l].claimed);
+
+  const ctx = document.getElementById("chart-canvas").getContext("2d");
+  if (chartInstance) {
+    chartInstance.data.labels = labels;
+    chartInstance.data.datasets[0].data = registeredData;
+    chartInstance.data.datasets[1].data = claimedData;
+    chartInstance.update();
+  } else {
+    chartInstance = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets: [
+        { label: "Registered", data: registeredData },
+        { label: "Claimed", data: claimedData }
+      ]},
+      options: { scales: { y: { beginAtZero: true, precision: 0 } }, plugins: { legend: { display: true } } }
+    });
+  }
+
+  const tbody = document.getElementById("stats-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  validCodes.forEach(e => {
+    const row = document.createElement("tr");
+    ["name", "membership", "category"].forEach(f => {
+      const td = document.createElement("td");
+      td.textContent = e[f]; row.appendChild(td);
+    });
+
+    const cfg = qrConfigs[e.category];
+    const tdClaim = document.createElement("td");
+    if (cfg && new Date() >= new Date(cfg.start) && new Date() <= new Date(cfg.end)) {
+      let html = "";
+      for (let i = 0; i < cfg.maxClaims; i++) {
+        html += i < e.claims ? "<span class='claim-box claimed'></span>" : "<span class='claim-box'></span>";
+      }
+      tdClaim.innerHTML = html;
+    } else tdClaim.textContent = "No food available";
+    row.appendChild(tdClaim);
+
+    const tdAction = document.createElement("td");
+    const btnDel = document.createElement("button");
+    btnDel.innerText = "Delete";
+    btnDel.onclick = async () => { 
+      const all = await getDocs(collection(db, "generatedQRCodes"));
+      const docRef = all.docs.find(doc => doc.data().membership === e.membership).ref;
+      await deleteDoc(docRef);
+      showStatistics();
+    };
+    tdAction.appendChild(btnDel);
+    row.appendChild(tdAction);
+
+    tbody.appendChild(row);
+  });
+}
+
+// --- Search ---
+function filterStatsTable() {
+  const v = document.getElementById("stats-search").value.toLowerCase();
+  document.querySelectorAll("#stats-table tbody tr").forEach(row => {
+    const n = row.cells[0].textContent.toLowerCase();
+    const m = row.cells[1].textContent.toLowerCase();
+    row.style.display = (n.includes(v) || m.includes(v)) ? "" : "none";
+  });
+}
+document.getElementById("stats-search").addEventListener("input", filterStatsTable);
+
+// On page load
+updateQRGenButton();
