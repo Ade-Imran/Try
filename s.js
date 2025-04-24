@@ -13,11 +13,10 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 // --- Firestore Helper Functions ---
-const BROWSER_ID = navigator.userAgent;
-
 async function lsKey(key) {
-  return `${BROWSER_ID}::${key}`;
+  return key;
 }
+
 
 async function lsGet(key, fallback) {
   const docRef = db.collection('localStorage').doc(await lsKey(key));
