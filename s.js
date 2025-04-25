@@ -483,3 +483,21 @@ document.getElementById("stats-search").addEventListener("input", filterStatsTab
 
 // On page load
 updateQRGenButton();
+
+// Expose functions to global scope so inline HTML calls work
+window.adminLogin = adminLogin;
+window.logoutAdmin = logoutAdmin;
+window.navigateTo = navigateTo;
+window.backToPrevious = backToPrevious;
+window.startUserScanner = startUserScanner;
+window.startUserScannerForCategory = startUserScannerForCategory;
+window.selectAdminCategory = selectAdminCategory;
+window.setAdminCategory = setAdminCategory;
+window.saveSettings = saveSettings;
+window.deleteSettings = deleteSettings;
+window.toggleQRGeneration = toggleQRGeneration;
+window.generateQRCode = generateQRCode;
+window.claimFood = claimFood;
+window.printQRCode = printQRCode; // if you have this function
+window.showStatistics = showStatistics;
+
