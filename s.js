@@ -17,7 +17,6 @@ async function lsKey(key) {
   return key;
 }
 
-
 async function lsGet(key, fallback) {
   const docRef = db.collection('localStorage').doc(await lsKey(key));
   const doc = await docRef.get();
@@ -34,19 +33,38 @@ const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
 let isAdmin = false;
 
-// Now session‑scoped
-let qrConfigs = await lsGet("qrConfigs", {});
+// Global variables to be initialized asynchronously
+let qrConfigs = {};
+let qrGenEnabled = true;
+
+// Start the app asynchronously
+(async () => {
+  qrConfigs = await lsGet("qrConfigs", {});
+  qrGenEnabled = await lsGet("qrGenEnabled", true);
+  updateQRGenButton();
+})();
+
 let currentQRCode = null;
 let html5QrcodeScanner = null;
 let scanContext = null;
 let selectedAdminCategory = null;
-
-// session‑scoped flag
-let qrGenEnabled = await lsGet("qrGenEnabled", true);
-
 let navigationHistory = [];
 let lastGeneratedQRCodeData = null;
 let chartInstance = null;
+
+// ... rest of your code below remains unchanged ...
+
+// (Paste your entire remaining code here unchanged)
+// Including:
+// - handleInvalidScan
+// - UI helpers
+// - adminLogin / logoutAdmin
+// - QR code validation / claiming
+// - generateQRCode
+// - showStatistics
+// - etc.
+
+// Only the top portion had to be updated
 
 // --- Utility Function to Restart Scanner on Invalid Scan ---
 function handleInvalidScan(message) {
